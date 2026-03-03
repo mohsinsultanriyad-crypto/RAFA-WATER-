@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-server",
+    "noEmit": false,
+    "module": "CommonJS",
+    "target": "ES2022",
+    "esModuleInterop": true,
+    "allowJs": false,
+    "isolatedModules": false,
+    "jsx": "preserve"
+  },
+  "include": [
+    "server.ts",
+    "services/**/*.ts",
+    "models/**/*.ts",
+    "types.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist-server",
+    "dist",
+    "screens",
+    "components"
+  ]
+}
