@@ -1,3 +1,87 @@
+// Send FCM notification to tokens with matching role
+export async function sendJobNotification(role: string, city?: string) {
+  try {
+    if (!role) return;
+    // Find tokens where roles contains jobRole (case-insensitive, trimmed)
+    const tokens = await PushToken.find({
+      roles: { $elemMatch: { $regex: `^${role.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: "i" } }
+    });
+    if (!tokens.length) {
+      console.log(`No push tokens found for role: ${role}`);
+      return;
+    }
+    const fcmTokens = tokens.map(t => t.token);
+    const app = getFirebaseApp();
+    const message = {
+      notification: {
+        title: "New Job Posted",
+        body: city ? `New ${role} job available in ${city}` : `New ${role} job available`,
+      },
+      tokens: fcmTokens,
+    };
+    const response = await app.messaging().sendMulticast(message);
+    console.log(`Sent FCM notification to ${fcmTokens.length} tokens for role: ${role}. Success: ${response.successCount}, Failure: ${response.failureCount}`);
+    if (response.failureCount > 0) {
+      response.responses.forEach((r, idx) => {
+        if (!r.success) {
+          console.error(`FCM error for token ${fcmTokens[idx]}:`, r.error);
+        }
+      });
+    }
+  } catch (e) {
+    console.error("sendJobNotification error:", e);
+  }
+}
+import PushToken from "./models/PushToken";
+import { getFirebaseApp } from "./services/firebaseAdmin";
+import express from 'express';
+const pushRouter = express.Router();
+
+// POST /api/push/register
+pushRouter.post("/register", async (req, res) => {
+  try {
+    const { token, platform, roles, city } = req.body;
+    if (!token || platform !== "android") {
+      return res.status(400).json({ error: "token and platform=android required" });
+    }
+    const update = { platform, updatedAt: new Date() };
+    if (Array.isArray(roles)) update.roles = roles;
+    if (city) update.city = city;
+    await PushToken.findOneAndUpdate(
+      { token },
+      { $set: update, $setOnInsert: { roles: [] } },
+      { upsert: true, new: true }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: "Failed to register token" });
+  }
+});
+
+// POST /api/push/preferences
+pushRouter.post("/preferences", async (req, res) => {
+  try {
+    const { token, roles, city } = req.body;
+    if (!token || !Array.isArray(roles) || !roles.every(r => typeof r === "string")) {
+      return res.status(400).json({ error: "token and roles (string[]) required" });
+    }
+    const update = { roles: roles.map(r => r.trim()), updatedAt: new Date() };
+    if (city) update.city = city;
+    await PushToken.findOneAndUpdate(
+      { token },
+      { $set: update },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: "Failed to update preferences" });
+  }
+});
+
+// GET /api/push/health
+pushRouter.get("/health", (req, res) => {
+  res.json({ ok: true, routes: ["/api/push/register", "/api/push/preferences"] });
+});
 
 import express from 'express';
 import cors from 'cors';
@@ -22,6 +106,10 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(express.json());
+
+// Mount pushRouter at /api/push
+app.use("/api/push", pushRouter);
+console.log("Push routes mounted at /api/push");
 
 // Connect to MongoDB
 connectDB().catch((err) => {
@@ -57,6 +145,34 @@ app.post('/api/jobs', async (req, res) => {
     }
     const jobDoc = await Job.create(newJob);
     res.status(201).json(jobDoc.toObject());
+
+    // --- Send FCM notification to relevant tokens (fail-safe, do not block job creation) ---
+    (async () => {
+      try {
+        const jobRole = (jobDoc.jobRole || jobDoc.role || "").trim();
+        const city = (jobDoc.city || "").trim();
+        if (!jobRole) return;
+        // Find tokens where roles contains jobRole (case-insensitive, trimmed)
+        const tokens = await PushToken.find({
+          roles: { $elemMatch: { $regex: `^${jobRole.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: "i" } }
+        });
+        if (!tokens.length) return;
+        const fcmTokens = tokens.map(t => t.token);
+        const app = getFirebaseApp();
+        const message = {
+          notification: {
+            title: "New Job Posted",
+            body: city ? `${jobRole} in ${city}` : jobRole,
+          },
+          tokens: fcmTokens,
+        };
+        // Send multicast
+        await app.messaging().sendMulticast(message);
+      } catch (e) {
+        // Log but do not throw
+        console.error("FCM notification error:", e);
+      }
+    })();
   } catch (error) {
     console.error('Error posting job:', error);
     res.status(500).json({ error: 'Failed to post job' });
