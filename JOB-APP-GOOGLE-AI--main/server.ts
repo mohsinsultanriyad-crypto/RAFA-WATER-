@@ -135,7 +135,7 @@ if (process.env.NODE_ENV !== 'production') {
   })();
 } else {
   app.use(express.static(path.join(__dirname, 'dist')));
-  app.get('*', (req, res) => {
+  app.get('/*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
   app.listen(port, '0.0.0.0', () => {
