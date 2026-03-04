@@ -34,7 +34,7 @@ export async function sendJobNotification(role: string, city?: string) {
 }
 import PushToken from "./models/PushToken";
 import { getFirebaseApp } from "./services/firebaseAdmin";
-import express from 'express';
+// ...existing code...
 const pushRouter = express.Router();
 
 // POST /api/push/register
@@ -83,7 +83,7 @@ pushRouter.get("/health", (req, res) => {
   res.json({ ok: true, routes: ["/api/push/register", "/api/push/preferences"] });
 });
 
-import express from 'express';
+// ...existing code...
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
