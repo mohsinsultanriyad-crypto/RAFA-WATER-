@@ -11,9 +11,6 @@ import Job from './models/Job';
 dotenv.config();
 
 
-// __dirname workaround for CommonJS build
-// @ts-ignore
-const __dirname = path.resolve();
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
