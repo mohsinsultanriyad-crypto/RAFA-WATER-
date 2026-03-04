@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "dist-server",
+    "outFile": "dist-server/server.cjs",
     "noEmit": false,
     "module": "CommonJS",
     "target": "ES2022",
