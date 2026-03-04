@@ -2,7 +2,7 @@
   "name": "saudi-job",
   "private": true,
   "version": "0.0.0",
-  "type": "module",
+  
   "scripts": {
     "dev:server": "tsx server.ts",
     "dev:client": "vite",
