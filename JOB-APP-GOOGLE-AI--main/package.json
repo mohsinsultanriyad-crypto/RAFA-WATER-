@@ -12,7 +12,7 @@
     "build": "npm run build:client && npm run build:server",
     "start:server": "node dist-server/server.js",
     "lint": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
     "build:server": "tsc -p tsconfig.server.json && mv dist-server/server.js dist-server/server.cjs",
     "start:server": "node dist-server/server.cjs",
   },
