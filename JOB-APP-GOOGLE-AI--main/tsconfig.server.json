@@ -23,6 +23,7 @@
     "dist-server",
     "dist",
     "screens",
-    "components"
+    "components",
+    "services/api.ts"
   ]
 }

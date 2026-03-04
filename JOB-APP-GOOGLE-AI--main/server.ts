@@ -4,17 +4,19 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
-import { fileURLToPath } from 'url';
+
 import { connectDB } from './services/db';
 import Job from './models/Job';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+
+// __dirname workaround for CommonJS build
+// @ts-ignore
+const __dirname = path.resolve();
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = Number(process.env.PORT) || 3001;
 
 // CORS setup for Render
 app.use(cors({
