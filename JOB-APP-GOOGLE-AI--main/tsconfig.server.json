@@ -8,7 +8,9 @@
     "esModuleInterop": true,
     "allowJs": false,
     "isolatedModules": false,
-    "jsx": "preserve"
+    "jsx": "preserve",
+    "moduleResolution": "node",
+    "allowImportingTsExtensions": false
   },
   "include": [
     "server.ts",
