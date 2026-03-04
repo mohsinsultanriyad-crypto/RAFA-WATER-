@@ -133,7 +133,7 @@ const JobCard: React.FC<JobCardProps> = ({ job, onClick, onToggleSave, isNew }) 
         <span className="text-green-600 text-xs font-bold flex items-center">
           View Details
           <svg className="w-3 h-3 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="9 5l7 7-7 7" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
           </svg>
         </span>
       </div>
