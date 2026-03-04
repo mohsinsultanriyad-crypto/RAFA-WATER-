@@ -1,8 +1,30 @@
-// Send FCM notification to tokens with matching role
+import express from "express";
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { createServer as createViteServer } from 'vite';
+import path from 'path';
+import { connectDB } from './services/db';
+import Job from './models/Job';
+import PushToken from "./models/PushToken";
+import { getFirebaseApp } from "./services/firebaseAdmin";
+
+dotenv.config();
+
+const app = express();
+const port = Number(process.env.PORT) || 3001;
+
+// Middlewares
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGIN || '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.use(express.json());
+
+// FCM notification helper
 export async function sendJobNotification(role: string, city?: string) {
   try {
     if (!role) return;
-    // Find tokens where roles contains jobRole (case-insensitive, trimmed)
     const tokens = await PushToken.find({
       roles: { $elemMatch: { $regex: `^${role.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: "i" } }
     });
@@ -11,7 +33,7 @@ export async function sendJobNotification(role: string, city?: string) {
       return;
     }
     const fcmTokens = tokens.map(t => t.token);
-    const app = getFirebaseApp();
+    const firebaseApp = getFirebaseApp();
     const message = {
       notification: {
         title: "New Job Posted",
@@ -19,7 +41,7 @@ export async function sendJobNotification(role: string, city?: string) {
       },
       tokens: fcmTokens,
     };
-    const response = await app.messaging().sendMulticast(message);
+    const response = await firebaseApp.messaging().sendEachForMulticast(message);
     console.log(`Sent FCM notification to ${fcmTokens.length} tokens for role: ${role}. Success: ${response.successCount}, Failure: ${response.failureCount}`);
     if (response.failureCount > 0) {
       response.responses.forEach((r, idx) => {
@@ -32,19 +54,17 @@ export async function sendJobNotification(role: string, city?: string) {
     console.error("sendJobNotification error:", e);
   }
 }
-import PushToken from "./models/PushToken";
-import { getFirebaseApp } from "./services/firebaseAdmin";
-// ...existing code...
+
+// Push Routes
 const pushRouter = express.Router();
 
-// POST /api/push/register
 pushRouter.post("/register", async (req, res) => {
   try {
     const { token, platform, roles, city } = req.body;
     if (!token || platform !== "android") {
       return res.status(400).json({ error: "token and platform=android required" });
     }
-    const update = { platform, updatedAt: new Date() };
+    const update: any = { platform, updatedAt: new Date() };
     if (Array.isArray(roles)) update.roles = roles;
     if (city) update.city = city;
     await PushToken.findOneAndUpdate(
@@ -58,14 +78,13 @@ pushRouter.post("/register", async (req, res) => {
   }
 });
 
-// POST /api/push/preferences
 pushRouter.post("/preferences", async (req, res) => {
   try {
     const { token, roles, city } = req.body;
     if (!token || !Array.isArray(roles) || !roles.every(r => typeof r === "string")) {
       return res.status(400).json({ error: "token and roles (string[]) required" });
     }
-    const update = { roles: roles.map(r => r.trim()), updatedAt: new Date() };
+    const update: any = { roles: roles.map(r => r.trim()), updatedAt: new Date() };
     if (city) update.city = city;
     await PushToken.findOneAndUpdate(
       { token },
@@ -78,38 +97,11 @@ pushRouter.post("/preferences", async (req, res) => {
   }
 });
 
-// GET /api/push/health
 pushRouter.get("/health", (req, res) => {
   res.json({ ok: true, routes: ["/api/push/register", "/api/push/preferences"] });
 });
 
-// ...existing code...
-import cors from 'cors';
-import dotenv from 'dotenv';
-import { createServer as createViteServer } from 'vite';
-import path from 'path';
-
-import { connectDB } from './services/db';
-import Job from './models/Job';
-
-dotenv.config();
-
-
-
-const app = express();
-const port = Number(process.env.PORT) || 3001;
-
-// CORS setup for Render
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGIN || '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
-app.use(express.json());
-
-// Mount pushRouter at /api/push
 app.use("/api/push", pushRouter);
-console.log("Push routes mounted at /api/push");
 
 // Connect to MongoDB
 connectDB().catch((err) => {
@@ -146,30 +138,13 @@ app.post('/api/jobs', async (req, res) => {
     const jobDoc = await Job.create(newJob);
     res.status(201).json(jobDoc.toObject());
 
-    // --- Send FCM notification to relevant tokens (fail-safe, do not block job creation) ---
+    // Send FCM notification
     (async () => {
       try {
         const jobRole = (jobDoc.jobRole || jobDoc.role || "").trim();
         const city = (jobDoc.city || "").trim();
-        if (!jobRole) return;
-        // Find tokens where roles contains jobRole (case-insensitive, trimmed)
-        const tokens = await PushToken.find({
-          roles: { $elemMatch: { $regex: `^${jobRole.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: "i" } }
-        });
-        if (!tokens.length) return;
-        const fcmTokens = tokens.map(t => t.token);
-        const app = getFirebaseApp();
-        const message = {
-          notification: {
-            title: "New Job Posted",
-            body: city ? `${jobRole} in ${city}` : jobRole,
-          },
-          tokens: fcmTokens,
-        };
-        // Send multicast
-        await app.messaging().sendMulticast(message);
+        await sendJobNotification(jobRole, city);
       } catch (e) {
-        // Log but do not throw
         console.error("FCM notification error:", e);
       }
     })();
@@ -178,7 +153,6 @@ app.post('/api/jobs', async (req, res) => {
     res.status(500).json({ error: 'Failed to post job' });
   }
 });
-
 
 app.put('/api/jobs/:id', async (req, res) => {
   try {
@@ -201,7 +175,6 @@ app.put('/api/jobs/:id', async (req, res) => {
   }
 });
 
-
 app.delete('/api/jobs/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -220,7 +193,6 @@ app.delete('/api/jobs/:id', async (req, res) => {
   }
 });
 
-
 app.post('/api/jobs/:id/view', async (req, res) => {
   try {
     const { id } = req.params;
@@ -237,7 +209,6 @@ app.post('/api/jobs/:id/view', async (req, res) => {
   }
 });
 
-
 // Vite middleware for development
 if (process.env.NODE_ENV !== 'production') {
   (async () => {
@@ -252,7 +223,6 @@ if (process.env.NODE_ENV !== 'production') {
   })();
 } else {
   app.use(express.static(path.join(__dirname, 'dist')));
-  // Express 5.x: use regex for SPA fallback (exclude /api)
   app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
