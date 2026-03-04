@@ -39,8 +39,11 @@ export const deleteGlobalJob = async (id: string, email?: string, adminKey?: str
   return response.ok;
 };
 
-export const incrementJobViews = async (id: string): Promise<void> => {
-  await fetch(`${API_BASE}/jobs/${id}/view`, { method: 'POST' });
+export const incrementJobViews = async (id: string): Promise<number> => {
+  const response = await fetch(`${API_BASE}/jobs/${id}/view`, { method: 'POST' });
+  if (!response.ok) throw new Error('Failed to increment views');
+  const data = await response.json();
+  return data.views;
 };
 
 export const getLocalData = (): LocalData => {

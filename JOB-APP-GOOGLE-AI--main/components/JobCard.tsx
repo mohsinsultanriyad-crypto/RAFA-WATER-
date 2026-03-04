@@ -11,9 +11,13 @@ interface JobCardProps {
   isNew?: boolean;
 }
 
+
+import { incrementJobViews } from '../services/api';
+
 const JobCard: React.FC<JobCardProps> = ({ job, onClick, onToggleSave, isNew }) => {
   const [isSaved, setIsSaved] = React.useState(getLocalData().savedJobIds.includes(job.id));
-  
+  const [views, setViews] = React.useState(job.views || 0);
+
   const formattedDate = new Date(job.postedAt).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric'
@@ -58,9 +62,20 @@ const JobCard: React.FC<JobCardProps> = ({ job, onClick, onToggleSave, isNew }) 
     window.open(url, '_blank');
   };
 
+  // Handle card click: increment views and call parent onClick
+  const handleCardClick = async () => {
+    try {
+      const newViews = await incrementJobViews(job.id);
+      setViews(newViews);
+    } catch (e) {
+      // Optionally handle error
+    }
+    if (onClick) onClick();
+  };
+
   return (
     <div 
-      onClick={onClick}
+      onClick={handleCardClick}
       className="bg-white rounded-2xl p-4 mb-4 border border-gray-100 shadow-sm active:scale-[0.98] transition-all cursor-pointer hover:border-green-100 relative group"
     >
       <div className="flex justify-between items-start mb-2">
@@ -107,7 +122,7 @@ const JobCard: React.FC<JobCardProps> = ({ job, onClick, onToggleSave, isNew }) 
         <div className="flex items-center gap-3 text-gray-400">
           <div className="flex items-center gap-1">
             <Eye size={14} />
-            <span className="text-xs font-medium">{job.views || 0}</span>
+            <span className="text-xs font-medium">{views}</span>
           </div>
           <button 
             onClick={handleSave}

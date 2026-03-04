@@ -112,8 +112,9 @@ app.post('/api/jobs/:id/view', async (req, res) => {
     if (job) {
       job.views = (job.views || 0) + 1;
       await job.save();
+      return res.json({ views: job.views });
     }
-    res.json({ success: true });
+    res.status(404).json({ error: 'Job not found' });
   } catch (error) {
     console.error('Error incrementing views:', error);
     res.status(500).json({ error: 'Failed to increment views' });
