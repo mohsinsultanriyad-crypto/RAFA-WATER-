@@ -6,7 +6,7 @@ import path from 'path';
 import { connectDB } from './services/db';
 import Job from './models/Job';
 import PushToken from "./models/PushToken";
-import { getFirebaseApp } from "./services/firebaseAdmin";
+import { getFirebaseApp, getMessaging } from "./services/firebaseAdmin";
 
 dotenv.config();
 
@@ -21,74 +21,128 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// FCM notification helper
-export async function sendJobNotification(role: string, city?: string) {
+/**
+ * Implementation of sendJobNotification(jobRole, jobCity)
+ * - Normalizes inputs
+ * - Queries for matching tokens (role + optional city targeting)
+ * - Sends in chunks of 400
+ */
+export async function sendJobNotification(role: string, city?: string, customTitle?: string, customBody?: string) {
   try {
-    if (!role) return;
-    const tokens = await PushToken.find({
-      roles: { $elemMatch: { $regex: `^${role.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: "i" } }
-    });
-    if (!tokens.length) {
-      console.log(`No push tokens found for role: ${role}`);
+    const roleLower = (role || "").trim().toLowerCase();
+    const cityLower = (city || "").trim().toLowerCase();
+
+    if (!roleLower) {
+      console.log("[Push] No role provided, skipping.");
       return;
     }
-    const fcmTokens = tokens.map(t => t.token);
-    const firebaseApp = getFirebaseApp();
-    const message = {
-      notification: {
-        title: "New Job Posted",
-        body: city ? `New ${role} job available in ${city}` : `New ${role} job available`,
-      },
-      tokens: fcmTokens,
-    };
-    const response = await firebaseApp.messaging().sendEachForMulticast(message);
-    console.log(`Sent FCM notification to ${fcmTokens.length} tokens for role: ${role}. Success: ${response.successCount}, Failure: ${response.failureCount}`);
-    if (response.failureCount > 0) {
-      response.responses.forEach((r, idx) => {
-        if (!r.success) {
-          console.error(`FCM error for token ${fcmTokens[idx]}:`, r.error);
-        }
-      });
+
+    // Target tokens that subscribed to this role
+    // If token has a city preference, it must match jobCity.
+    // If token has no city preference (""), it matches any job city.
+    const query: any = { roles: roleLower };
+    if (cityLower) {
+      query.$or = [
+        { city: cityLower },
+        { city: "" },
+        { city: { $exists: false } }
+      ];
     }
+
+    const tokens = await PushToken.find(query);
+    const matchedCount = tokens.length;
+
+    console.log(`[Push] Normalized target - role: ${roleLower}, city: ${cityLower || 'any'}. Matched count: ${matchedCount}`);
+
+    if (matchedCount === 0) {
+      return;
+    }
+
+    const fcmTokens = tokens.map(t => t.token);
+    const messaging = getMessaging();
+
+    const title = customTitle || "New Job Posted";
+    const body = customBody || (city ? `${role} in ${city}` : role);
+
+    let sentCount = 0;
+    let failedCount = 0;
+
+    // FCM multicast limit is 500. Using 400 for safety.
+    const chunkSize = 400;
+    for (let i = 0; i < fcmTokens.length; i += chunkSize) {
+      const chunk = fcmTokens.slice(i, i + chunkSize);
+      const message: any = {
+        notification: { title, body },
+        tokens: chunk,
+        android: {
+          priority: "high",
+          notification: { sound: "default" }
+        }
+      };
+
+      try {
+        const response = await messaging.sendEachForMulticast(message);
+        sentCount += response.successCount;
+        failedCount += response.failureCount;
+      } catch (err) {
+        console.error("[Push] Batch error:", err);
+        failedCount += chunk.length;
+      }
+    }
+
+    console.log(`[Push] Report - Role: ${roleLower}, Matched: ${matchedCount}, Sent: ${sentCount}, Failed: ${failedCount}`);
+    return { matchedCount, sentCount, failedCount };
   } catch (e) {
-    console.error("sendJobNotification error:", e);
+    console.error("[Push] sendJobNotification error:", e);
+    return { error: e };
   }
 }
 
 // Push Routes
 const pushRouter = express.Router();
 
+// POST /api/push/register
 pushRouter.post("/register", async (req, res) => {
   try {
-    const { token, platform, roles, city } = req.body;
-    if (!token || platform !== "android") {
-      return res.status(400).json({ error: "token and platform=android required" });
+    const { token, platform } = req.body;
+    if (!token || typeof token !== "string") {
+      return res.status(400).json({ error: "Token string required" });
     }
-    const update: any = { platform, updatedAt: new Date() };
-    if (Array.isArray(roles)) update.roles = roles;
-    if (city) update.city = city;
     await PushToken.findOneAndUpdate(
       { token },
-      { $set: update, $setOnInsert: { roles: [] } },
-      { upsert: true, new: true }
+      {
+        $set: { platform: platform || "android", updatedAt: new Date() },
+        $setOnInsert: { createdAt: new Date(), roles: [], city: "" }
+      },
+      { upsert: true }
     );
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: "Failed to register token" });
+    res.status(500).json({ error: "Failed to register" });
   }
 });
 
+// POST /api/push/preferences
 pushRouter.post("/preferences", async (req, res) => {
   try {
     const { token, roles, city } = req.body;
-    if (!token || !Array.isArray(roles) || !roles.every(r => typeof r === "string")) {
-      return res.status(400).json({ error: "token and roles (string[]) required" });
+    if (!token || !Array.isArray(roles)) {
+      return res.status(400).json({ error: "token and roles array required" });
     }
-    const update: any = { roles: roles.map(r => r.trim()), updatedAt: new Date() };
-    if (city) update.city = city;
+    const normalizedRoles = roles
+      .filter(r => typeof r === "string" && r.trim() !== "")
+      .map(r => r.trim().toLowerCase());
+    const normalizedCity = typeof city === "string" ? city.trim().toLowerCase() : "";
+
     await PushToken.findOneAndUpdate(
       { token },
-      { $set: update },
+      {
+        $set: {
+          roles: normalizedRoles,
+          city: normalizedCity,
+          updatedAt: new Date()
+        }
+      },
       { upsert: true }
     );
     res.json({ ok: true });
@@ -97,8 +151,44 @@ pushRouter.post("/preferences", async (req, res) => {
   }
 });
 
-pushRouter.get("/health", (req, res) => {
-  res.json({ ok: true, routes: ["/api/push/register", "/api/push/preferences"] });
+// POST /api/push/test
+pushRouter.post("/test", async (req, res) => {
+  try {
+    const { role, city, title, body } = req.body;
+    if (!role) return res.status(400).json({ error: "role required" });
+    const result: any = await sendJobNotification(role, city, title, body);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(500).json({ error: "Test push failed" });
+  }
+});
+
+// GET /api/push/health
+pushRouter.get("/health", async (req, res) => {
+  let firebaseOk = false;
+  try {
+    getFirebaseApp();
+    firebaseOk = true;
+  } catch (e) {}
+  const tokenCount = await PushToken.countDocuments();
+  res.json({ ok: true, firebase: firebaseOk, tokenCount });
+});
+
+// GET /api/push/tokens
+pushRouter.get("/tokens", async (req, res) => {
+  try {
+    const tokens = await PushToken.find().sort({ updatedAt: -1 }).limit(50);
+    const items = tokens.map((t: any) => ({
+      platform: t.platform,
+      roles: t.roles,
+      city: t.city,
+      updatedAt: t.updatedAt,
+      tokenPrefix: t.token ? t.token.substring(0, 12) : ""
+    }));
+    res.json({ count: tokens.length, items });
+  } catch (e) {
+    res.status(500).json({ error: "Error fetching tokens" });
+  }
 });
 
 app.use("/api/push", pushRouter);
@@ -109,14 +199,13 @@ connectDB().catch((err) => {
   process.exit(1);
 });
 
-// API Routes
+// Job Routes
 app.get('/api/jobs', async (req, res) => {
   try {
     const fifteenDaysAgo = Date.now() - (15 * 24 * 60 * 60 * 1000);
     const jobs = await Job.find({ postedAt: { $gt: fifteenDaysAgo } }).sort({ postedAt: -1 }).lean();
     res.json(jobs);
   } catch (error) {
-    console.error('Error fetching jobs:', error);
     res.status(500).json({ error: 'Failed to fetch jobs' });
   }
 });
@@ -138,14 +227,17 @@ app.post('/api/jobs', async (req, res) => {
     const jobDoc = await Job.create(newJob);
     res.status(201).json(jobDoc.toObject());
 
-    // Send FCM notification
+    // Trigger Notification
     (async () => {
       try {
-        const jobRole = (jobDoc.jobRole || jobDoc.role || "").trim();
-        const city = (jobDoc.city || "").trim();
-        await sendJobNotification(jobRole, city);
-      } catch (e) {
-        console.error("FCM notification error:", e);
+        // Robust field mapping: frontend may send jobRole or role
+        const role = (jobDoc.jobRole || req.body.jobRole || req.body.role || "").trim();
+        const city = (jobDoc.city || req.body.city || "").trim();
+        if (role) {
+          await sendJobNotification(role, city);
+        }
+      } catch (pushErr) {
+        console.error("[Push] Trigger failure:", pushErr);
       }
     })();
   } catch (error) {
@@ -161,7 +253,7 @@ app.put('/api/jobs/:id', async (req, res) => {
     const job = await Job.findOne({ id });
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (job.email !== email) {
-      return res.status(403).json({ error: 'Unauthorized: Email mismatch' });
+      return res.status(403).json({ error: 'Unauthorized' });
     }
     if (updateData.isUrgent && !job.isUrgent) {
       updateData.urgentUntil = Date.now() + (24 * 60 * 60 * 1000);
@@ -170,7 +262,6 @@ app.put('/api/jobs/:id', async (req, res) => {
     await job.save();
     res.json(job.toObject());
   } catch (error) {
-    console.error('Error updating job:', error);
     res.status(500).json({ error: 'Failed to update job' });
   }
 });
@@ -183,12 +274,11 @@ app.delete('/api/jobs/:id', async (req, res) => {
     if (!job) return res.status(404).json({ error: 'Job not found' });
     const isAdmin = adminKey === 'saudi_admin_2025';
     if (!isAdmin && job.email !== email) {
-      return res.status(403).json({ error: 'Unauthorized: Email mismatch' });
+      return res.status(403).json({ error: 'Unauthorized' });
     }
     await Job.deleteOne({ id });
-    res.json({ message: 'Job deleted successfully' });
+    res.json({ message: 'Job deleted' });
   } catch (error) {
-    console.error('Error deleting job:', error);
     res.status(500).json({ error: 'Failed to delete job' });
   }
 });
@@ -204,7 +294,6 @@ app.post('/api/jobs/:id/view', async (req, res) => {
     }
     res.status(404).json({ error: 'Job not found' });
   } catch (error) {
-    console.error('Error incrementing views:', error);
     res.status(500).json({ error: 'Failed to increment views' });
   }
 });

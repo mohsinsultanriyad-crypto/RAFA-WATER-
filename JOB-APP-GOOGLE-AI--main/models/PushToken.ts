@@ -13,11 +13,9 @@ const PushTokenSchema: Schema = new Schema({
   token: { type: String, required: true, unique: true, index: true },
   platform: { type: String, required: true },
   roles: { type: [String], default: [] },
-  city: { type: String },
-  updatedAt: { type: Date, default: Date.now },
-  createdAt: { type: Date, default: Date.now }
+  city: { type: String, default: "" },
 }, {
   timestamps: true
 });
 
-export default mongoose.model<IPushToken>('PushToken', PushTokenSchema);
+export default mongoose.models.PushToken || mongoose.model<IPushToken>('PushToken', PushTokenSchema);
