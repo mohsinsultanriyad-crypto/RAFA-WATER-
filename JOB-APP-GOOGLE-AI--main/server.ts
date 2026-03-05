@@ -22,6 +22,24 @@ app.use(cors({
 app.use(express.json());
 
 /**
+ * Robust Role Normalization
+ * - convert to lowercase
+ * - trim
+ * - replace underscores and hyphens with spaces
+ * - collapse multiple spaces to one
+ * - remove leading/trailing punctuation
+ */
+function normalizeRole(value: string): string {
+  if (!value || typeof value !== "string") return "";
+  let v = value.toLowerCase();
+  v = v.replace(/[_\-]+/g, ' '); // underscores/hyphens -> space
+  v = v.replace(/\s+/g, ' ');    // multiple spaces -> single
+  v = v.trim();
+  v = v.replace(/^[^\w\s]+|[^\w\s]+$/g, ''); // remove leading/trailing punctuation
+  return v.trim();
+}
+
+/**
  * Implementation of sendJobNotification(jobRole, jobCity)
  * - Normalizes inputs
  * - Queries for matching tokens (role + optional city targeting)
@@ -29,18 +47,18 @@ app.use(express.json());
  */
 export async function sendJobNotification(role: string, city?: string, customTitle?: string, customBody?: string) {
   try {
-    const roleLower = (role || "").trim().toLowerCase();
+    const roleNormalized = normalizeRole(role);
     const cityLower = (city || "").trim().toLowerCase();
 
-    if (!roleLower) {
-      console.log("[Push] No role provided, skipping.");
+    if (!roleNormalized) {
+      console.log("[Push] No valid role provided (even after normalization), skipping.");
       return;
     }
 
     // Target tokens that subscribed to this role
     // If token has a city preference, it must match jobCity.
     // If token has no city preference (""), it matches any job city.
-    const query: any = { roles: roleLower };
+    const query: any = { roles: roleNormalized };
     if (cityLower) {
       query.$or = [
         { city: cityLower },
@@ -52,17 +70,17 @@ export async function sendJobNotification(role: string, city?: string, customTit
     const tokens = await PushToken.find(query);
     const matchedCount = tokens.length;
 
-    console.log(`[Push] Normalized target - role: ${roleLower}, city: ${cityLower || 'any'}. Matched count: ${matchedCount}`);
+    console.log(`[Push] Normalized target - role: ${roleNormalized}, city: ${cityLower || 'any'}. Matched count: ${matchedCount}`);
 
     if (matchedCount === 0) {
-      return;
+      return { matchedCount: 0, sentCount: 0, failedCount: 0 };
     }
 
     const fcmTokens = tokens.map(t => t.token);
     const messaging = getMessaging();
 
     const title = customTitle || "New Job Posted";
-    const body = customBody || (city ? `${role} in ${city}` : role);
+    const body = customBody || (city ? `${roleNormalized} in ${cityLower}` : roleNormalized);
 
     let sentCount = 0;
     let failedCount = 0;
@@ -90,7 +108,7 @@ export async function sendJobNotification(role: string, city?: string, customTit
       }
     }
 
-    console.log(`[Push] Report - Role: ${roleLower}, Matched: ${matchedCount}, Sent: ${sentCount}, Failed: ${failedCount}`);
+    console.log(`[Push] Report - Role: ${roleNormalized}, Matched: ${matchedCount}, Sent: ${sentCount}, Failed: ${failedCount}`);
     return { matchedCount, sentCount, failedCount };
   } catch (e) {
     console.error("[Push] sendJobNotification error:", e);
@@ -129,9 +147,15 @@ pushRouter.post("/preferences", async (req, res) => {
     if (!token || !Array.isArray(roles)) {
       return res.status(400).json({ error: "token and roles array required" });
     }
-    const normalizedRoles = roles
-      .filter(r => typeof r === "string" && r.trim() !== "")
-      .map(r => r.trim().toLowerCase());
+
+    // Normalize every role, remove empty, and deduplicate
+    const normalizedRoles = Array.from(new Set(
+      roles
+        .filter(r => typeof r === "string")
+        .map(r => normalizeRole(r))
+        .filter(r => r !== "")
+    ));
+
     const normalizedCity = typeof city === "string" ? city.trim().toLowerCase() : "";
 
     await PushToken.findOneAndUpdate(
@@ -160,6 +184,34 @@ pushRouter.post("/test", async (req, res) => {
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(500).json({ error: "Test push failed" });
+  }
+});
+
+// POST /api/push/debug-match
+pushRouter.post("/debug-match", async (req, res) => {
+  try {
+    const { role, city } = req.body;
+    const normalizedRole = normalizeRole(role);
+    const cityLower = (city || "").trim().toLowerCase();
+
+    const query: any = { roles: normalizedRole };
+    if (cityLower) {
+      query.$or = [
+        { city: cityLower },
+        { city: "" },
+        { city: { $exists: false } }
+      ];
+    }
+
+    const tokens = await PushToken.find(query);
+    res.json({
+      ok: true,
+      normalizedRole,
+      matchedCount: tokens.length,
+      matchedTokenPrefixes: tokens.map((t: any) => t.token ? t.token.substring(0, 12) : "unknown")
+    });
+  } catch (e) {
+    res.status(500).json({ error: "Debug match failed" });
   }
 });
 
@@ -231,17 +283,20 @@ app.post('/api/jobs', async (req, res) => {
     (async () => {
       try {
         // Robust field mapping: frontend may send jobRole or role
-        const role = (jobDoc.jobRole || req.body.jobRole || req.body.role || "").trim();
+        const roleRaw = (jobDoc.jobRole || req.body.jobRole || req.body.role || "").trim();
         const city = (jobDoc.city || req.body.city || "").trim();
-        if (role) {
-          await sendJobNotification(role, city);
+
+        // Normalize role before triggering notification
+        const normalizedRole = normalizeRole(roleRaw);
+
+        if (normalizedRole) {
+          await sendJobNotification(normalizedRole, city);
         }
       } catch (pushErr) {
         console.error("[Push] Trigger failure:", pushErr);
       }
     })();
   } catch (error) {
-    console.error('Error posting job:', error);
     res.status(500).json({ error: 'Failed to post job' });
   }
 });
