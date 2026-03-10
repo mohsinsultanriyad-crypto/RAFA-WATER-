@@ -18,8 +18,33 @@ const AlertsScreen: React.FC<AlertsScreenProps> = ({ lastCheckTime = 0 }) => {
 
   const commonRoles = [
     'Driver', 'Sales', 'Engineer', 'Teacher', 'Nurse', 'Security', 'Delivery', 'IT',
-    'Accountant', 'Manager', 'Receptionist', 'Chef', 'Waiter', 'Electrician', 'Plumber',
-    'Marketing', 'HR', 'Pharmacist', 'Doctor', 'Data Entry', 'Warehouse'
+  'Accountant', 'Manager', 'Receptionist', 'Chef', 'Waiter', 'Electrician', 'Plumber',
+  'Marketing', 'HR', 'Pharmacist', 'Doctor', 'Data Entry', 'Warehouse',
+
+  // Construction & Technical Roles
+  'Welder', 'Rigger', 'Helper', 'Instrument Technician', 'Electrical Technician',
+  'Mechanical Technician', 'AC Technician', 'HVAC Technician', 'Civil Technician',
+  'Safety Officer', 'Safety Supervisor', 'Scaffolder', 'Pipe Fitter', 'Fabricator',
+  'Mason', 'Steel Fixer', 'Carpenter', 'Painter', 'Tile Mason', 'Gypsum Carpenter',
+
+  // Industrial & Oil/Gas
+  'Instrument Fitter', 'Calibration Technician', 'Control Valve Technician',
+  'Analyzer Technician', 'Maintenance Technician', 'Plant Operator',
+  'Production Operator', 'Utility Operator', 'Boiler Operator',
+
+  // Equipment & Machine Operators
+  'Heavy Driver', 'Light Driver', 'Forklift Operator', 'Crane Operator',
+  'Tower Crane Operator', 'Excavator Operator', 'Bulldozer Operator',
+  'Bobcat Operator', 'Machine Operator', 'CNC Operator',
+
+  // Logistics & Support
+  'Storekeeper', 'Warehouse Supervisor', 'Material Coordinator',
+  'Logistics Coordinator', 'Procurement Officer', 'Document Controller',
+
+  // Engineering & Office Roles
+  'Site Engineer', 'Project Engineer', 'Planning Engineer',
+  'QA QC Inspector', 'QA QC Engineer', 'Quantity Surveyor',
+  'Draftsman', 'AutoCAD Draftsman', 'Project Manager'
   ];
 
   const inputRef = React.useRef<HTMLInputElement>(null);
